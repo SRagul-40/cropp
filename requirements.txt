@@ -5,5 +5,3 @@ plotly
 folium
 streamlit-folium
 google-generativeai
-scikit-learn
-Pillow
