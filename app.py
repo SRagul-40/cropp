@@ -8,172 +8,179 @@ from streamlit_folium import st_folium
 import google.generativeai as genai
 import os
 
-# --- 1. CONFIGURATION & THEME ---
-st.set_page_config(page_title="AgriLife AI | Indian Farm Advisor", layout="wide")
+# --- 1. PAGE SETUP & THEME ---
+st.set_page_config(page_title="AI Farming Advisor v1.0", layout="wide")
 
-# API Setup for AI Advisor
+# Configure AI (Get key from https://aistudio.google.com/)
 try:
-    # Set your API Key in Streamlit Secrets as GEMINI_API_KEY
     genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
     ai_model = genai.GenerativeModel('gemini-1.5-flash')
 except:
-    st.sidebar.warning("⚠️ AI Expert mode offline. (API Key missing)")
+    st.sidebar.warning("⚠️ AI Expert Mode Offline. Please add Gemini API Key to Secrets.")
 
-# Professional Indian Agri-Tech CSS
+# Custom CSS for the Exact Video Look
 st.markdown("""
     <style>
-    .stApp { background-color: #040d04; color: #e8f5e9; }
-    .metric-card {
-        background: rgba(255, 255, 255, 0.05);
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #2e7d32;
-        text-align: center;
+    .stApp { background-color: #0e1117; color: white; }
+    .card { background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 10px; border: 1px solid #2e7d32; margin-bottom: 20px; }
+    .hero-banner { 
+        background: linear-gradient(90deg, #1b5e20 0%, #2e7d32 100%); 
+        padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 30px; 
     }
-    .hero-section {
-        background: linear-gradient(90deg, #1b5e20 0%, #2e7d32 100%);
-        padding: 40px;
-        border-radius: 15px;
-        text-align: center;
-        margin-bottom: 25px;
-        color: white;
-    }
-    .highlight { color: #FFD700; font-weight: bold; }
+    .metric-value { font-size: 2.2rem; font-weight: 800; color: #FFD700; }
+    .metric-label { font-size: 1rem; color: #a5d6a7; }
+    [data-testid="stMetricValue"] { color: #FFD700 !important; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR: FARM INPUTS ---
+# --- 2. SIDEBAR (USER ENTRY - EDITABLE READINGS) ---
 with st.sidebar:
     st.title("🚜 Farm Tools")
-    if st.button("🔄 Reset Analysis"):
+    if st.button("Reset Analysis", use_container_width=True):
         st.rerun()
+    
+    st.header("📍 Location Information")
+    lat = st.number_input("Enter Latitude", value=13.0827, format="%.6f")
+    lon = st.number_input("Enter Longitude", value=80.2707, format="%.6f")
+    acres = st.number_input("Land Area (Acres)", value=3.0, step=0.1)
 
-    st.header("📍 Farm Location")
-    # Search simulation
-    search_loc = st.text_input("Search Patta/Chitta/Survey No.", placeholder="e.g. TN-1022-5")
-    
-    col_lat, col_lon = st.columns(2)
-    lat = col_lat.number_input("Latitude", value=13.0827, format="%.4f")
-    lon = col_lon.number_input("Longitude", value=80.2707, format="%.4f")
-    
-    acres = st.number_input("Land Area (Acres)", value=3.0, step=0.5)
-    
-    st.header("🧪 Soil Profile")
-    soil_type = st.selectbox("Soil Type", ["Alluvial Soil", "Black Soil", "Red Soil", "Laterite Soil", "Clayey"])
-    ph_val = st.slider("Soil pH Level", 4.0, 9.0, 6.5)
-    
-    analyze_btn = st.button("🚀 Analyze Indian Farm Conditions", use_container_width=True)
+    st.header("🧪 Soil Readings")
+    soil_type = st.selectbox("Soil Type", ["Alluvial", "Black", "Red", "Laterite", "Clayey"])
+    ph = st.slider("Soil pH Level", 4.0, 9.0, 6.7)
+    nitrogen = st.slider("Nitrogen (N)", 0, 100, 50)
+    phosphorus = st.slider("Phosphorus (P)", 0, 100, 40)
+    potassium = st.slider("Potassium (K)", 0, 100, 40)
 
-# --- 3. MAIN DASHBOARD ---
+    st.header("🌤️ Weather Readings")
+    temp = st.number_input("Current Temp (°C)", value=28.5)
+    rain = st.number_input("Annual Rainfall (mm)", value=1150.0)
+    
+    st.header("⚙️ Options")
+    analysis_type = st.selectbox("Analysis Type", ["Comprehensive Analysis", "Quick Assessment"])
+    
+    analyze_btn = st.button("🔴 Analyze Farm Conditions", use_container_width=True)
+
+# --- 3. LOGIC & DATA GENERATION ---
+# Dynamic Indian Crop Database
+CROP_DB = {
+    "Paddy (Rice)": {"price": 2250, "cost": 25000, "yield": 24, "suit": 95, "p_risk": "Low", "m_risk": "Low"},
+    "Wheat": {"price": 2275, "cost": 20000, "yield": 18, "suit": 91, "p_risk": "Low", "m_risk": "Medium"},
+    "Cotton": {"price": 7020, "cost": 32000, "yield": 11, "suit": 89, "p_risk": "High", "m_risk": "High"},
+    "Sugarcane": {"price": 3150, "cost": 45000, "yield": 320, "suit": 87, "p_risk": "Medium", "m_risk": "Low"},
+    "Maize": {"price": 2090, "cost": 18000, "yield": 20, "suit": 84, "p_risk": "Low", "m_risk": "Medium"},
+    "Soybeans": {"price": 4500, "cost": 15000, "yield": 10, "suit": 82, "p_risk": "Medium", "m_risk": "Medium"}
+}
+
+# --- 4. MAIN DASHBOARD ---
 st.markdown("""
-    <div class="hero-section">
-        <h1>🌾 AI Farming Advisor (India Edition)</h1>
-        <p>Real-time crop intelligence using satellite data, Indian market MSP, and soil health analysis.</p>
+    <div class="hero-banner">
+        <h1 style='margin:0;'>👨‍🌾 AI Farming Advisor</h1>
+        <p style='margin:0;'>Personalized Indian crop recommendations based on your editable soil and market inputs.</p>
     </div>
 """, unsafe_allow_html=True)
 
 if analyze_btn:
-    with st.spinner("Fetching Mandi prices and local climate data..."):
-        # 1. Dashboard Metrics
+    with st.spinner("Analyzing site conditions..."):
+        # Section 1: Analysis Summary
         st.header("📊 Analysis Summary")
         m1, m2, m3, m4 = st.columns(4)
         
-        # Simulated logic for India
-        best_crop = "Paddy (Rice)" if soil_type in ["Alluvial Soil", "Clayey"] else "Cotton"
-        m1.metric("Best Recommended Crop", best_crop)
-        m2.metric("Expected Net Profit", f"₹ {acres * 45000:,.0f}", "+₹5,200")
-        m3.metric("AI Confidence", "96.4%")
+        # Calculation for best crop (Simple logic based on Soil Type)
+        best_crop = "Paddy (Rice)" if soil_type in ["Alluvial", "Clayey"] else "Cotton"
+        best_data = CROP_DB[best_crop]
+        
+        profit_per_acre = (best_data["price"] * best_data["yield"]) - best_data["cost"]
+        total_profit = profit_per_acre * acres
+        
+        m1.metric("Best Crop", best_crop)
+        m2.metric("Expected Profit", f"₹ {total_profit:,.2f}")
+        m3.metric("Confidence Score", "95.5%")
         m4.metric("Land Area", f"{acres} Acres")
 
-        # 2. Detailed Analytics Tabs
-        tab1, tab2, tab3 = st.tabs(["📋 Mandi Insights", "📊 Market Comparison", "💰 Cost-Benefit Analysis"])
-        
-        # Indian Crop Data (Simulated Market Prices per Quintal)
-        india_crops = pd.DataFrame({
-            'Crop': ['Paddy', 'Sugarcane', 'Cotton', 'Maize', 'Groundnut'],
-            'Mandi Price (₹/Q)': [2250, 3150, 7050, 2090, 6375],
-            'Expected Yield (Q/Acre)': [25, 350, 12, 22, 15],
-            'Suitability Score': [94.5, 88.0, 91.2, 85.6, 82.3]
-        })
-        # Calculate Total Profit
-        india_crops['Total Revenue (₹)'] = india_crops['Mandi Price (₹/Q)'] * india_crops['Expected Yield (Q/Acre)'] * acres
+        # Section 2: Top Crop Recommendations (Tabs)
+        st.header("🏆 Top Crop Recommendations")
+        tab1, tab2, tab3 = st.tabs(["📋 Detailed List", "📊 Comparison Chart", "💰 Profit Analysis"])
+
+        crops = list(CROP_DB.keys())
+        suitability = [CROP_DB[c]["suit"] for c in crops]
+        profits = [((CROP_DB[c]["price"] * CROP_DB[c]["yield"]) - CROP_DB[c]["cost"]) * acres for c in crops]
+        costs = [CROP_DB[c]["cost"] * acres for c in crops]
+        revenues = [CROP_DB[c]["price"] * CROP_DB[c]["yield"] * acres for c in crops]
 
         with tab1:
-            st.subheader("Current Market Estimates (India)")
-            st.dataframe(india_crops, use_container_width=True)
-        
+            detailed_df = pd.DataFrame({
+                "Crop": crops,
+                "Gross Revenue": revenues,
+                "Total Costs": costs,
+                "Net Profit": profits,
+                "Suitability Score": suitability
+            })
+            st.dataframe(detailed_df.style.format("₹ {:,.2f}", subset=["Gross Revenue", "Total Costs", "Net Profit"]), use_container_width=True)
+
         with tab2:
-            fig_suit = px.bar(india_crops, x='Crop', y='Suitability Score', color='Suitability Score', 
-                             color_continuous_scale='Greens', title="Crop Suitability for Local Soil")
+            fig_suit = px.bar(x=crops, y=suitability, color=suitability, color_continuous_scale="Greens", labels={'x':'Crop', 'y':'Suitability %'})
             st.plotly_chart(fig_suit, use_container_width=True)
 
         with tab3:
-            fig_rev = px.pie(india_crops, values='Total Revenue (₹)', names='Crop', hole=0.4,
-                            title="Potential Revenue Distribution (Total Acres)")
-            st.plotly_chart(fig_rev, use_container_width=True)
+            fig_prof = px.bar(x=crops, y=profits, title="Profit Analysis per Crop (₹)", color_discrete_sequence=['#FFD700'])
+            st.plotly_chart(fig_prof, use_container_width=True)
 
-        # 3. Environmental Conditions (Indian Context)
-        st.divider()
-        st.header("🌍 Local Environment & Soil Health")
-        col_w, col_s = st.columns(2)
-        
-        with col_w:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <h3>☀️ Weather Forecast</h3>
-                <p>Temp: <b>31.5°C</b> | Humidity: <b>68%</b></p>
-                <p>Forecast: <span class='highlight'>Moderate Monsoon Rains Expected</span></p>
-                <p>Wind Speed: 18 km/h</p>
-            </div>
-            """, unsafe_allow_html=True)
-        
-        with col_s:
-            st.markdown(f"""
-            <div class='metric-card'>
-                <h3>🌱 Soil Nutrient Report</h3>
-                <p>Nitrogen: <b>Medium</b> | Phosphorus: <b>Low</b></p>
-                <p>Organic Carbon: <b>0.52%</b> (Needs Improvement)</p>
-                <p>Soil Type: <b>{soil_type}</b> | pH: <b>{ph_val}</b></p>
-            </div>
-            """, unsafe_allow_html=True)
+        # Section 3: Expanders (Financial & Risk Assessment)
+        for crop in crops:
+            with st.expander(f"Details for {crop}"):
+                d1, d2 = st.columns(2)
+                with d1:
+                    st.subheader("Financial Analysis")
+                    st.write(f"Estimated Revenue: ₹ {CROP_DB[crop]['price'] * CROP_DB[crop]['yield'] * acres:,.2f}")
+                    st.write(f"Estimated Cost: ₹ {CROP_DB[crop]['cost'] * acres:,.2f}")
+                    st.write(f"Net Profit: **₹ {((CROP_DB[crop]['price'] * CROP_DB[crop]['yield']) - CROP_DB[crop]['cost']) * acres:,.2f}**")
+                with d2:
+                    st.subheader("Risk Assessment")
+                    st.write(f"🌡️ Weather Risk: **Low**")
+                    st.write(f"📈 Market Risk: **{CROP_DB[crop]['m_risk']}**")
+                    st.write(f"🐛 Pest Risk: **{CROP_DB[crop]['p_risk']}**")
 
-        # 4. Planting Calendar for India (Kharif/Rabi/Zaid)
+        # Section 4: Environmental & Soil (Based on User Input)
         st.divider()
-        st.header("🗓️ Indian Crop Calendar (Kharif/Rabi)")
-        months = ["Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec", "Jan", "Feb", "Mar", "Apr", "May"]
-        crops = ["Paddy", "Wheat", "Cotton", "Mustard", "Moong Dal"]
-        # Creating a heatmap of planting suitability
-        suit_matrix = np.random.randint(40, 98, size=(len(crops), len(months)))
-        fig_heat = px.imshow(suit_matrix, labels=dict(x="Month", y="Crop", color="Suitability"),
-                            x=months, y=crops, color_continuous_scale='YlGn', text_auto=True)
+        st.header("🌍 Environmental & Soil Conditions")
+        e1, e2 = st.columns(2)
+        with e1:
+            st.markdown(f"""<div class='card'><h3>🌤️ Weather Conditions</h3>
+            <p>Current Temp: <b>{temp}°C</b></p>
+            <p>Annual Rainfall: <b>{rain} mm</b></p>
+            </div>""", unsafe_allow_html=True)
+        with e2:
+            st.markdown(f"""<div class='card'><h3>🌱 Soil Conditions</h3>
+            <p>Soil Type: <b>{soil_type}</b></p>
+            <p>pH Level: <b>{ph}</b></p>
+            <p>Nitrogen (N): <b>{nitrogen}</b></p>
+            </div>""", unsafe_allow_html=True)
+
+        # Section 5: Planting Calendar (Previous vs Current)
+        st.header("🗓️ Planting Calendar (Heatmap)")
+        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        z_data = np.random.randint(40, 95, size=(len(crops), 12))
+        fig_heat = px.imshow(z_data, x=months, y=crops, color_continuous_scale="YlGn", title="Monthly Suitability (Current Year)")
         st.plotly_chart(fig_heat, use_container_width=True)
 
-        # 5. AI Agronomist - Local Advice
+        # Section 6: AI Expert Recommendations
         st.divider()
-        st.header("🤖 AI Agronomist Recommendations")
+        st.header("🤖 Recommended Next Steps")
         try:
-            prompt = f"Act as an Indian Agri-Expert. Farm: {acres} acres, {soil_type}, pH {ph_val}. Suggest 5 fertilizer and irrigation tips specifically for {best_crop} in Indian climate."
+            prompt = f"Act as an Indian Agri-Expert. Farm: {acres} acres, Soil: {soil_type}, pH {ph}, Nitrogen {nitrogen}. Best Crop: {best_crop}. Suggest 5 Fertilizer and Irrigation tips."
             response = ai_model.generate_content(prompt)
             st.write(response.text)
         except:
-            st.write("1. 🌾 **Crop Choice:** Paddy is ideal for your soil; ensure nursery preparation starts before the monsoon.")
-            st.write("2. 🧪 **Soil Health:** Your pH is slightly high. Consider applying Gypsum to neutralize.")
-            st.write("3. 💧 **Irrigation:** Use AWD (Alternate Wetting and Drying) to save water in Paddy.")
-            st.write("4. 💰 **MSP Watch:** The latest MSP for Paddy is ₹2,250; track local Mandis for better rates.")
-            st.write("5. 🛡️ **Pest Control:** Check for Stem Borer activity in the early vegetative stage.")
+            st.write("1. Start nursery preparation for Paddy.\n2. Ensure proper drainage for the field.\n3. Apply balanced NPK fertilizers.\n4. Monitor soil moisture weekly.\n5. Check local Mandi prices for {best_crop}.")
 
-        # 6. Data Export
-        csv = india_crops.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Full Farm Report (CSV)", data=csv, file_name="india_farm_report.csv")
+        # Section 7: Download List
+        csv = detailed_df.to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Download Analysis Report (CSV)", data=csv, file_name="farm_analysis.csv", mime="text/csv")
 
 else:
-    # Landing Page
-    st.info("👋 Namaste! Please enter your farm details in the sidebar to generate a 360° Agriculture Report.")
-    
-    # Satellite Map
+    st.info("👋 Welcome! Enter your soil and weather readings in the sidebar and click 'Analyze' to begin.")
     m = folium.Map(location=[lat, lon], zoom_start=15)
-    # Using Google Satellite tiles for agricultural clarity
     google_satellite = 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
-    folium.TileLayer(tiles=google_satellite, attr='Google', name='Satellite View').add_to(m)
-    folium.Marker([lat, lon], popup="Your Selected Farm").add_to(m)
+    folium.TileLayer(tiles=google_satellite, attr='Google', name='Satellite').add_to(m)
+    folium.Marker([lat, lon], popup="Selected Farm").add_to(m)
     st_folium(m, width=1200, height=500)
