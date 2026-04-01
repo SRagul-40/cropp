@@ -11,13 +11,25 @@ from PIL import Image
 import io
 import requests
 
-# 1. PAGE SETUP & MULTI-LANGUAGE ENGINE
-st.set_page_config(page_title="TN Agri-Oracle Master v17", layout="wide", initial_sidebar_state="collapsed")
+# -----------------------------------------------------------------------------
+# 1. DATASET (Moved to top to prevent NameError)
+# -----------------------------------------------------------------------------
+CROP_DB = {
+    "Paddy (Samba)": {"in": 2183, "tn": 2450, "yield": 25, "dur": "125 Days", "fert": "Urea (50kg), SSP (25kg), Potash (25kg)", "mandi": "Tanjore Central Market", "soil": "Alluvial Clay"},
+    "Turmeric": {"in": 7800, "tn": 9800, "yield": 22, "dur": "9 Months", "fert": "Neem Cake (200kg), FYM (10t), NPK 120:60:90", "mandi": "Erode Turmeric Complex", "soil": "Red/Black Loam"},
+    "Sugarcane": {"in": 315, "tn": 375, "yield": 450, "dur": "12 Months", "fert": "Press mud, Urea, Super Phosphate", "mandi": "Arignar Anna Sugar Mills", "soil": "Heavy Alluvial"},
+    "Banana": {"in": 1800, "tn": 2400, "yield": 150, "dur": "11 Months", "fert": "NPK 200:100:300g per plant", "mandi": "Trichy Banana Auction Centre", "soil": "Rich Loam Soil"},
+    "Jasmine": {"in": 500, "tn": 850, "yield": 32, "dur": "Daily (6m Peak)", "fert": "Groundnut Cake, Vermicompost", "mandi": "Madurai Flower Market", "soil": "Red Loamy Soil"}
+}
+
+# -----------------------------------------------------------------------------
+# 2. PAGE SETUP & MULTI-LANGUAGE ENGINE
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="TN Agri-Oracle Master v17.1", layout="wide", initial_sidebar_state="collapsed")
 
 if 'lang' not in st.session_state:
     st.session_state.lang = 'en'
 
-# Translation Dictionary
 T = {
     "en": {
         "title": "🌾 TN PRECISION AGRI-SATELLITE MASTER",
@@ -40,11 +52,13 @@ T = {
 }
 L = T[st.session_state.lang]
 
-# 2. STUNNING UI CSS (TEA PLANTATION THEME)
+# -----------------------------------------------------------------------------
+# 3. UI CSS (TEA PLANTATION THEME)
+# -----------------------------------------------------------------------------
 st.markdown(f"""
     <style>
     .stApp {{
-        background: linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)), 
+        background: linear-gradient(rgba(0,0,0,0.7), rgba(0,0,0,0.7)), 
                     url('https://as2.ftcdn.net/v2/jpg/05/44/22/16/1000_F_544221648_hY0Bf0UfH1N9XlWfFjB9YpG7n9V6uJzF.jpg');
         background-size: cover; background-attachment: fixed;
     }}
@@ -52,8 +66,9 @@ st.markdown(f"""
         -webkit-appearance: none; margin: 0; 
     }}
     .glass-panel {{
-        background: rgba(0, 20, 0, 0.9); border: 2px solid #00ff88;
+        background: rgba(0, 20, 0, 0.92); border: 2px solid #00ff88;
         border-radius: 12px; padding: 25px; color: white; margin-bottom: 20px;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.8);
     }}
     .worth-val {{ color: #ffcc00; font-size: 1.8rem; font-weight: bold; }}
     .label-hint {{ color: #00ff88; font-size: 0.85rem; font-weight: bold; }}
@@ -62,36 +77,34 @@ st.markdown(f"""
     </style>
 """, unsafe_allow_html=True)
 
-# 3. HELPER LOGIC (GEO, WEATHER, BORDERS)
+# -----------------------------------------------------------------------------
+# 4. HELPER LOGIC
+# -----------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def fetch_geo(lat, lon):
     try:
-        geolocator = Nominatim(user_agent="tn_master_v17")
-        location = geolocator.reverse((lat, lon), timeout=10)
+        geolocator = Nominatim(user_agent="tn_agri_master_final")
+        location = geolocator.reverse((lat, lon), timeout=15)
         if location:
             a = location.raw.get('address', {})
-            return a.get('village') or a.get('suburb') or a.get('town') or "Agri Zone", a.get('city') or a.get('district') or "Hub", a.get('state', 'Tamil Nadu')
+            village = a.get('village') or a.get('suburb') or a.get('town') or a.get('hamlet') or "Agri Zone"
+            city = a.get('city') or a.get('district') or a.get('county') or "District Hub"
+            state = a.get('state', 'Tamil Nadu')
+            return str(village), str(city), str(state)
     except: pass
     return "Rural Farm Area", "District Center", "Tamil Nadu"
 
 def get_borders(lat, lon, acres):
     side = math.sqrt(acres * 4047)
+    # 1 degree lat is approx 111,320 meters
     d_lat = (side / 111320) / 2
+    # 1 degree lon depends on the latitude
     d_lon = (side / (111320 * math.cos(math.radians(lat)))) / 2
     return [[lat+d_lat, lon-d_lon], [lat+d_lat, lon+d_lon], [lat-d_lat, lon+d_lon], [lat-d_lat, lon-d_lon], [lat+d_lat, lon-d_lon]]
 
-# 4. DATASET
-CROP_DATA = {
-    "Paddy (Samba)": {"in": 2183, "tn": 2450, "yield": 25, "dur": "125 Days", "fert": "Urea (50kg), Super Phosphate (25kg), Potash (25kg)", "soil": "Alluvial/Clay"},
-    "Millets (Ragi/Bajra)": {"in": 3500, "tn": 4100, "yield": 12, "dur": "100 Days", "fert": "FYM (5 tons), Azospirillum (2kg), NPK 40:20:20", "soil": "Red/Sandy Loam"},
-    "Maize (Corn)": {"in": 2090, "tn": 2350, "yield": 30, "dur": "110 Days", "fert": "DAP (50kg), Urea (75kg), Zinc Sulphate (10kg)", "soil": "Loam Soil"},
-    "Groundnut": {"in": 6377, "tn": 7200, "yield": 18, "dur": "105 Days", "fert": "Gypsum (400kg), Borax (10kg), NPK 25:50:75", "soil": "Red Sandy"},
-    "Sugarcane": {"in": 315, "tn": 365, "yield": 450, "dur": "12 Months", "fert": "Press mud (10t), Urea (225kg), Super Phosphate (110kg)", "soil": "Heavy Alluvial"},
-    "Turmeric": {"in": 7500, "tn": 9200, "yield": 22, "dur": "9 Months", "fert": "Neem Cake (200kg), FYM (10t), NPK 120:60:90", "soil": "Red/Black Loam"},
-    "Coconut": {"in": 2600, "tn": 3300, "yield": 80, "dur": "Permanent", "fert": "TNAU Tonic (200ml), Borax (50g), Epsom Salt (500g)", "soil": "Sandy/Coastal"}
-}
-
-# 5. UI - TOP HEADER & LANGUAGE TOGGLE
+# -----------------------------------------------------------------------------
+# 5. UI - TOP HEADER
+# -----------------------------------------------------------------------------
 c_title, c_btns = st.columns([7, 3])
 with c_title: st.markdown(f"<h1 style='color: #00ff88;'>{L['title']}</h1>", unsafe_allow_html=True)
 with c_btns:
@@ -101,10 +114,12 @@ with c_btns:
             st.session_state.lang = 'ta' if st.session_state.lang == 'en' else 'en'
             st.rerun()
     with col_p:
-        if st.button(f"📥 {L['pdf']}"):
-            st.toast("Generating PDF Report...")
+        # PDF Generation Logic integrated here
+        pdf_trigger = st.button(f"📥 {L['pdf']}")
 
-# 6. ROW 1: KEYBOARD INPUTS (NO EMPTY BOXES)
+# -----------------------------------------------------------------------------
+# 6. ROW 1: INPUTS (NO EMPTY BOXES)
+# -----------------------------------------------------------------------------
 st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
 i1, i2, i3, i4 = st.columns(4)
 with i1:
@@ -121,7 +136,9 @@ with i4:
     sel_crop = st.selectbox("cp", list(CROP_DB.keys()), label_visibility="collapsed")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 7. ROW 2: SATELLITE BORDERS & ADMINISTRATIVE INFO
+# -----------------------------------------------------------------------------
+# 7. ROW 2: MAP & WEATHER
+# -----------------------------------------------------------------------------
 col_m, col_w = st.columns([2.5, 1])
 with col_m:
     st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
@@ -143,7 +160,9 @@ with col_w:
     st.info(CROP_DB[sel_crop]['mandi'])
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 8. ROW 3: SOIL TEST & LAB DATA
+# -----------------------------------------------------------------------------
+# 8. ROW 3: SOIL DATA
+# -----------------------------------------------------------------------------
 st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
 st.subheader("🧪 Soil & Environmental Parameters")
 s1, s2, s3, s4, s5 = st.columns(5)
@@ -164,7 +183,9 @@ with s5:
     u_ph = st.number_input("ph", value=6.8, label_visibility="collapsed")
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 9. ROW 4: FINANCIALS & FLOWCHART
+# -----------------------------------------------------------------------------
+# 9. ROW 4: FINANCIALS & CHART
+# -----------------------------------------------------------------------------
 f_l, f_r = st.columns([1.2, 2])
 c_data = CROP_DB[sel_crop]
 tn_w = acres_in * c_data['yield'] * c_data['tn']
@@ -188,7 +209,9 @@ with f_r:
     st.plotly_chart(fig, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 10. ROW 5: AI TOOLS & SUGGESTIONS
+# -----------------------------------------------------------------------------
+# 10. ROW 5: AI & STRATEGY
+# -----------------------------------------------------------------------------
 t_l, t_r = st.columns(2)
 with t_l:
     st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
@@ -201,11 +224,28 @@ with t_l:
 with t_r:
     st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
     st.subheader(L['suggest'])
-    st.markdown(f"- **উரம் (Fertilizer):** {c_data['fert']}")
-    st.markdown(f"- **சந்தை (Mandi):** Sell at {c_data['mandi']} for max profit.")
+    st.markdown(f"- **உரம் (Fertilizer):** {c_data['fert']}")
+    st.markdown(f"- **மண் (Soil):** Your land shows **{c_data['soil']}** characteristics. pH {u_ph} is ideal.")
     st.markdown(f"- **நீர் (Water):** Drip irrigation detected for {acres_in} acres.")
-    st.markdown(f"- **மண் (Soil):** Your pH {u_ph} is ideal for {sel_crop}.")
     st.markdown(f"- **பாதுகாப்பு (Safety):** Fencing perimeter: {math.sqrt(acres_in*4047)*4:.0f}m.")
     st.markdown('</div>', unsafe_allow_html=True)
 
-st.write("<center style='opacity:0.5; color:white;'>Agri-Satellite Pro Master v17.0 | Fullscreen Mode Enabled</center>", unsafe_allow_html=True)
+# -----------------------------------------------------------------------------
+# 11. PDF GENERATOR
+# -----------------------------------------------------------------------------
+if pdf_trigger:
+    pdf = FPDF()
+    pdf.add_page()
+    pdf.set_font("Arial", 'B', 16)
+    pdf.cell(200, 10, "Farm Digital Health Report", 0, 1, 'C')
+    pdf.set_font("Arial", size=12)
+    pdf.ln(10)
+    pdf.cell(200, 10, f"Location: {vil}, {cit}", 0, 1)
+    pdf.cell(200, 10, f"Crop: {sel_crop} | Acres: {acres_in}", 0, 1)
+    pdf.cell(200, 10, f"TN Market Value: INR {tn_w:,.2f}", 0, 1)
+    pdf.cell(200, 10, f"India Market Value: INR {in_w:,.2f}", 0, 1)
+    pdf.cell(200, 10, f"Fertilizer: {c_data['fert']}", 0, 1)
+    report_bytes = pdf.output(dest='S').encode('latin-1')
+    st.download_button("Download Official PDF Report", report_bytes, "AgriFarmReport.pdf", "application/pdf")
+
+st.markdown("<center style='opacity:0.5; color:white;'>Agri-Satellite Pro Master v17.1 | Fullscreen Intelligence</center>", unsafe_allow_html=True)
