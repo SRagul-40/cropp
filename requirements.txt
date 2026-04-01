@@ -5,7 +5,5 @@ folium
 streamlit-folium
 plotly
 geopy
-google-generativeai
 fpdf
-requests
 Pillow
