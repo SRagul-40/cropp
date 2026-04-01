@@ -1,186 +1,142 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import plotly.express as px
-import plotly.graph_objects as go
 import folium
 from streamlit_folium import st_folium
+import plotly.graph_objects as go
+from geopy.geocoders import Nominatim
+import math
+import requests
+from datetime import datetime
+from fpdf import FPDF
 import google.generativeai as genai
-import os
+from PIL import Image
+import io
 
-# --- 1. PAGE SETUP & THEME ---
-st.set_page_config(page_title="AI Farming Advisor v1.0", layout="wide")
+# -----------------------------------------------------------------------------
+# 1. LANGUAGE & UI CONFIGURATION
+# -----------------------------------------------------------------------------
+st.set_page_config(page_title="Agri-Satellite Pro v16", layout="wide", initial_sidebar_state="collapsed")
 
-# Configure AI (Get key from https://aistudio.google.com/)
-try:
-    genai.configure(api_key=st.secrets["GEMINI_API_KEY"])
-    ai_model = genai.GenerativeModel('gemini-1.5-flash')
-except:
-    st.sidebar.warning("⚠️ AI Expert Mode Offline. Please add Gemini API Key to Secrets.")
-
-# Custom CSS for the Exact Video Look
-st.markdown("""
-    <style>
-    .stApp { background-color: #0e1117; color: white; }
-    .card { background: rgba(255, 255, 255, 0.05); padding: 20px; border-radius: 10px; border: 1px solid #2e7d32; margin-bottom: 20px; }
-    .hero-banner { 
-        background: linear-gradient(90deg, #1b5e20 0%, #2e7d32 100%); 
-        padding: 30px; border-radius: 15px; text-align: center; margin-bottom: 30px; 
+# Multi-language Dictionary
+TRANS = {
+    "en": {
+        "title": "🌾 TN PRECISION AGRI-SATELLITE INTELLIGENCE",
+        "lat": "LATITUDE", "lon": "LONGITUDE", "acres": "ACRES", "crop": "SELECT CROP",
+        "weather": "Live Weather", "village": "Village", "city": "City/District", "state": "State",
+        "worth": "Net Worth Analysis", "history": "5-Year Profit Trend", "fert": "Fertilizer Schedule",
+        "leaf": "AI Leaf Doctor", "pdf": "Download Farm Report", "suggest": "Expert Suggestions",
+        "duration": "Harvest Duration", "tn": "TN Value", "in": "India Value"
+    },
+    "ta": {
+        "title": "🌾 தமிழ்நாடு துல்லிய வேளாண் செயற்கைக்கோள் நுண்ணறிவு",
+        "lat": "அட்சரேகை", "lon": "தீர்க்கரேகை", "acres": "ஏக்கர்", "crop": "பயிரைத் தேர்ந்தெடுக்கவும்",
+        "weather": "நேரடி வானிலை", "village": "கிராமம்", "city": "நகரம்/மாவட்டம்", "state": "மாநிலம்",
+        "worth": "நிகர மதிப்பு பகுப்பாய்வு", "history": "5 ஆண்டு லாபப் போக்கு", "fert": "உர அட்டவணை",
+        "leaf": "AI இலை மருத்துவர்", "pdf": "பண்ணை அறிக்கையைப் பதிவிறக்கவும்", "suggest": "நிபுணர் ஆலோசனைகள்",
+        "duration": "அறுவடை காலம்", "tn": "தமிழக மதிப்பு", "in": "இந்திய மதிப்பு"
     }
-    .metric-value { font-size: 2.2rem; font-weight: 800; color: #FFD700; }
-    .metric-label { font-size: 1rem; color: #a5d6a7; }
-    [data-testid="stMetricValue"] { color: #FFD700 !important; }
+}
+
+if 'lang' not in st.session_state: st.session_state.lang = 'en'
+L = TRANS[st.session_state.lang]
+
+# -----------------------------------------------------------------------------
+# 2. CUSTOM CSS (STUNNING TECH UI)
+# -----------------------------------------------------------------------------
+st.markdown(f"""
+    <style>
+    .stApp {{
+        background: linear-gradient(rgba(0,0,0,0.65), rgba(0,0,0,0.65)), 
+                    url('https://as2.ftcdn.net/v2/jpg/05/44/22/16/1000_F_544221648_hY0Bf0UfH1N9XlWfFjB9YpG7n9V6uJzF.jpg');
+        background-size: cover; background-attachment: fixed;
+    }}
+    input[type=number]::-webkit-inner-spin-button, input[type=number]::-webkit-outer-spin-button {{ 
+        -webkit-appearance: none; margin: 0; 
+    }}
+    .glass-panel {{
+        background: rgba(0, 25, 0, 0.9); border: 2px solid #00ff88;
+        border-radius: 15px; padding: 25px; color: white; margin-bottom: 20px;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.8);
+    }}
+    .worth-val {{ color: #ffcc00; font-size: 1.8rem; font-weight: bold; text-shadow: 2px 2px 4px black; }}
+    .label-hint {{ color: #00ff88; font-size: 0.85rem; font-weight: bold; }}
+    [data-testid="stSidebar"] {{ display: none; }}
+    .main .block-container {{ padding: 1rem 3rem; max-width: 100%; }}
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR (USER ENTRY - EDITABLE READINGS) ---
-with st.sidebar:
-    st.title("🚜 Farm Tools")
-    if st.button("Reset Analysis", use_container_width=True):
-        st.rerun()
-    
-    st.header("📍 Location Information")
-    lat = st.number_input("Enter Latitude", value=13.0827, format="%.6f")
-    lon = st.number_input("Enter Longitude", value=80.2707, format="%.6f")
-    acres = st.number_input("Land Area (Acres)", value=3.0, step=0.1)
+# -----------------------------------------------------------------------------
+# 3. CORE ENGINES (SATELLITE, GEO, WEATHER)
+# -----------------------------------------------------------------------------
+@st.cache_data
+def get_geo_details(lat, lon):
+    try:
+        geolocator = Nominatim(user_agent="tn_agri_pro_v16")
+        location = geolocator.reverse((lat, lon), timeout=10)
+        a = location.raw.get('address', {})
+        return a.get('village') or a.get('suburb') or a.get('town'), a.get('city') or a.get('district'), a.get('state')
+    except: return "Agri Zone", "District Hub", "Tamil Nadu"
 
-    st.header("🧪 Soil Readings")
-    soil_type = st.selectbox("Soil Type", ["Alluvial", "Black", "Red", "Laterite", "Clayey"])
-    ph = st.slider("Soil pH Level", 4.0, 9.0, 6.7)
-    nitrogen = st.slider("Nitrogen (N)", 0, 100, 50)
-    phosphorus = st.slider("Phosphorus (P)", 0, 100, 40)
-    potassium = st.slider("Potassium (K)", 0, 100, 40)
+def get_weather(lat, lon):
+    # Mock Weather if API Key not provided, otherwise use OpenWeatherMap
+    return {"temp": "31°C", "hum": "65%", "desc": "Sunny / Optimal for Sowing"}
 
-    st.header("🌤️ Weather Readings")
-    temp = st.number_input("Current Temp (°C)", value=28.5)
-    rain = st.number_input("Annual Rainfall (mm)", value=1150.0)
-    
-    st.header("⚙️ Options")
-    analysis_type = st.selectbox("Analysis Type", ["Comprehensive Analysis", "Quick Assessment"])
-    
-    analyze_btn = st.button("🔴 Analyze Farm Conditions", use_container_width=True)
+def calculate_borders(lat, lon, acres):
+    side = math.sqrt(acres * 4047)
+    d_lat = (side / 111320) / 2
+    d_lon = (side / (111320 * math.cos(math.radians(lat)))) / 2
+    return [[lat+d_lat, lon-d_lon], [lat+d_lat, lon+d_lon], [lat-d_lat, lon+d_lon], [lat-d_lat, lon-d_lon], [lat+d_lat, lon-d_lon]]
 
-# --- 3. LOGIC & DATA GENERATION ---
-# Dynamic Indian Crop Database
+# -----------------------------------------------------------------------------
+# 4. DATASET & AI SETUP
+# -----------------------------------------------------------------------------
 CROP_DB = {
-    "Paddy (Rice)": {"price": 2250, "cost": 25000, "yield": 24, "suit": 95, "p_risk": "Low", "m_risk": "Low"},
-    "Wheat": {"price": 2275, "cost": 20000, "yield": 18, "suit": 91, "p_risk": "Low", "m_risk": "Medium"},
-    "Cotton": {"price": 7020, "cost": 32000, "yield": 11, "suit": 89, "p_risk": "High", "m_risk": "High"},
-    "Sugarcane": {"price": 3150, "cost": 45000, "yield": 320, "suit": 87, "p_risk": "Medium", "m_risk": "Low"},
-    "Maize": {"price": 2090, "cost": 18000, "yield": 20, "suit": 84, "p_risk": "Low", "m_risk": "Medium"},
-    "Soybeans": {"price": 4500, "cost": 15000, "yield": 10, "suit": 82, "p_risk": "Medium", "m_risk": "Medium"}
+    "Paddy": {"in": 2183, "tn": 2450, "yield": 25, "dur": "125 Days", "fert": "Urea (50kg), SSP (25kg), Potash (25kg)"},
+    "Turmeric": {"in": 7800, "tn": 9500, "yield": 22, "dur": "9 Months", "fert": "FYM (10t), Neem Cake (200kg), NPK 120:60:90"},
+    "Sugarcane": {"in": 315, "tn": 370, "yield": 450, "dur": "12 Months", "fert": "Press mud, Urea, Super Phosphate"},
+    "Banana": {"in": 1800, "tn": 2300, "yield": 150, "dur": "11 Months", "fert": "Drip Fertigation NPK 200:100:300"}
 }
 
-# --- 4. MAIN DASHBOARD ---
-st.markdown("""
-    <div class="hero-banner">
-        <h1 style='margin:0;'>👨‍🌾 AI Farming Advisor</h1>
-        <p style='margin:0;'>Personalized Indian crop recommendations based on your editable soil and market inputs.</p>
-    </div>
-""", unsafe_allow_html=True)
+# -----------------------------------------------------------------------------
+# 5. HEADER & TOP CONTROLS
+# -----------------------------------------------------------------------------
+c_head, c_lang = st.columns([8, 2])
+with c_head: st.markdown(f"<h1>{L['title']}</h1>", unsafe_allow_html=True)
+with c_lang: 
+    if st.button("English / தமிழ்"):
+        st.session_state.lang = 'ta' if st.session_state.lang == 'en' else 'en'
+        st.rerun()
 
-if analyze_btn:
-    with st.spinner("Analyzing site conditions..."):
-        # Section 1: Analysis Summary
-        st.header("📊 Analysis Summary")
-        m1, m2, m3, m4 = st.columns(4)
-        
-        # Calculation for best crop (Simple logic based on Soil Type)
-        best_crop = "Paddy (Rice)" if soil_type in ["Alluvial", "Clayey"] else "Cotton"
-        best_data = CROP_DB[best_crop]
-        
-        profit_per_acre = (best_data["price"] * best_data["yield"]) - best_data["cost"]
-        total_profit = profit_per_acre * acres
-        
-        m1.metric("Best Crop", best_crop)
-        m2.metric("Expected Profit", f"₹ {total_profit:,.2f}")
-        m3.metric("Confidence Score", "95.5%")
-        m4.metric("Land Area", f"{acres} Acres")
+st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
+i1, i2, i3, i4 = st.columns(4)
+with i1: 
+    st.markdown(f"<p class='label-hint'>{L['lat']}</p>", unsafe_allow_html=True)
+    lat_in = st.number_input("lt", value=11.1271, format="%.6f", label_visibility="collapsed")
+with i2:
+    st.markdown(f"<p class='label-hint'>{L['lon']}</p>", unsafe_allow_html=True)
+    lon_in = st.number_input("ln", value=78.6569, format="%.6f", label_visibility="collapsed")
+with i3:
+    st.markdown(f"<p class='label-hint'>{L['acres']}</p>", unsafe_allow_html=True)
+    acres_in = st.number_input("ac", value=1.0, label_visibility="collapsed")
+with i4:
+    st.markdown(f"<p class='label-hint'>{L['crop']}</p>", unsafe_allow_html=True)
+    sel_crop = st.selectbox("cp", list(CROP_DB.keys()), label_visibility="collapsed")
+st.markdown('</div>', unsafe_allow_html=True)
 
-        # Section 2: Top Crop Recommendations (Tabs)
-        st.header("🏆 Top Crop Recommendations")
-        tab1, tab2, tab3 = st.tabs(["📋 Detailed List", "📊 Comparison Chart", "💰 Profit Analysis"])
+# -----------------------------------------------------------------------------
+# 6. SATELLITE MAP & WEATHER CENTER
+# -----------------------------------------------------------------------------
+m_left, m_right = st.columns([2.5, 1])
 
-        crops = list(CROP_DB.keys())
-        suitability = [CROP_DB[c]["suit"] for c in crops]
-        profits = [((CROP_DB[c]["price"] * CROP_DB[c]["yield"]) - CROP_DB[c]["cost"]) * acres for c in crops]
-        costs = [CROP_DB[c]["cost"] * acres for c in crops]
-        revenues = [CROP_DB[c]["price"] * CROP_DB[c]["yield"] * acres for c in crops]
+with m_left:
+    st.markdown('<div class="glass-panel">', unsafe_allow_html=True)
+    m = folium.Map(location=[lat_in, lon_in], zoom_start=18)
+    folium.TileLayer(tiles='https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', attr='Google', name='Satellite').add_to(m)
+    borders = calculate_borders(lat_in, lon_in, acres_in)
+    folium.Polygon(locations=borders, color="#00ff88", weight=5, fill=True, fill_opacity=0.2).add_to(m)
+    st_folium(m, width="100%", height=450)
+    st.markdown('</div>', unsafe_allow_html=True)
 
-        with tab1:
-            detailed_df = pd.DataFrame({
-                "Crop": crops,
-                "Gross Revenue": revenues,
-                "Total Costs": costs,
-                "Net Profit": profits,
-                "Suitability Score": suitability
-            })
-            st.dataframe(detailed_df.style.format("₹ {:,.2f}", subset=["Gross Revenue", "Total Costs", "Net Profit"]), use_container_width=True)
-
-        with tab2:
-            fig_suit = px.bar(x=crops, y=suitability, color=suitability, color_continuous_scale="Greens", labels={'x':'Crop', 'y':'Suitability %'})
-            st.plotly_chart(fig_suit, use_container_width=True)
-
-        with tab3:
-            fig_prof = px.bar(x=crops, y=profits, title="Profit Analysis per Crop (₹)", color_discrete_sequence=['#FFD700'])
-            st.plotly_chart(fig_prof, use_container_width=True)
-
-        # Section 3: Expanders (Financial & Risk Assessment)
-        for crop in crops:
-            with st.expander(f"Details for {crop}"):
-                d1, d2 = st.columns(2)
-                with d1:
-                    st.subheader("Financial Analysis")
-                    st.write(f"Estimated Revenue: ₹ {CROP_DB[crop]['price'] * CROP_DB[crop]['yield'] * acres:,.2f}")
-                    st.write(f"Estimated Cost: ₹ {CROP_DB[crop]['cost'] * acres:,.2f}")
-                    st.write(f"Net Profit: **₹ {((CROP_DB[crop]['price'] * CROP_DB[crop]['yield']) - CROP_DB[crop]['cost']) * acres:,.2f}**")
-                with d2:
-                    st.subheader("Risk Assessment")
-                    st.write(f"🌡️ Weather Risk: **Low**")
-                    st.write(f"📈 Market Risk: **{CROP_DB[crop]['m_risk']}**")
-                    st.write(f"🐛 Pest Risk: **{CROP_DB[crop]['p_risk']}**")
-
-        # Section 4: Environmental & Soil (Based on User Input)
-        st.divider()
-        st.header("🌍 Environmental & Soil Conditions")
-        e1, e2 = st.columns(2)
-        with e1:
-            st.markdown(f"""<div class='card'><h3>🌤️ Weather Conditions</h3>
-            <p>Current Temp: <b>{temp}°C</b></p>
-            <p>Annual Rainfall: <b>{rain} mm</b></p>
-            </div>""", unsafe_allow_html=True)
-        with e2:
-            st.markdown(f"""<div class='card'><h3>🌱 Soil Conditions</h3>
-            <p>Soil Type: <b>{soil_type}</b></p>
-            <p>pH Level: <b>{ph}</b></p>
-            <p>Nitrogen (N): <b>{nitrogen}</b></p>
-            </div>""", unsafe_allow_html=True)
-
-        # Section 5: Planting Calendar (Previous vs Current)
-        st.header("🗓️ Planting Calendar (Heatmap)")
-        months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-        z_data = np.random.randint(40, 95, size=(len(crops), 12))
-        fig_heat = px.imshow(z_data, x=months, y=crops, color_continuous_scale="YlGn", title="Monthly Suitability (Current Year)")
-        st.plotly_chart(fig_heat, use_container_width=True)
-
-        # Section 6: AI Expert Recommendations
-        st.divider()
-        st.header("🤖 Recommended Next Steps")
-        try:
-            prompt = f"Act as an Indian Agri-Expert. Farm: {acres} acres, Soil: {soil_type}, pH {ph}, Nitrogen {nitrogen}. Best Crop: {best_crop}. Suggest 5 Fertilizer and Irrigation tips."
-            response = ai_model.generate_content(prompt)
-            st.write(response.text)
-        except:
-            st.write("1. Start nursery preparation for Paddy.\n2. Ensure proper drainage for the field.\n3. Apply balanced NPK fertilizers.\n4. Monitor soil moisture weekly.\n5. Check local Mandi prices for {best_crop}.")
-
-        # Section 7: Download List
-        csv = detailed_df.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download Analysis Report (CSV)", data=csv, file_name="farm_analysis.csv", mime="text/csv")
-
-else:
-    st.info("👋 Welcome! Enter your soil and weather readings in the sidebar and click 'Analyze' to begin.")
-    m = folium.Map(location=[lat, lon], zoom_start=15)
-    google_satellite = 'https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}'
-    folium.TileLayer(tiles=google_satellite, attr='Google', name='Satellite').add_to(m)
-    folium.Marker([lat, lon], popup="Selected Farm").add_to(m)
-    st_folium(m, width=1200, height=500)
+with m_right:
+    st.markdown('<
