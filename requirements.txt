@@ -1,7 +1,11 @@
 streamlit
 pandas
 numpy
-plotly
 folium
 streamlit-folium
+plotly
+geopy
 google-generativeai
+fpdf
+requests
+Pillow
